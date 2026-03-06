@@ -1,0 +1,44 @@
+# FastAPI and async
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+httpx==0.26.0
+
+# System scanning
+psutil==5.9.7
+pyusb==1.2.1
+pyserial==4.0
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+psycopg2-binary==2.9.9
+chromadb==0.4.22
+neo4j==5.16.0
+
+# ML and meta-learning
+scikit-learn==1.4.0
+numpy==1.26.3
+pandas==2.1.4
+
+# Queue and caching
+celery==5.3.6
+redis==5.0.1
+
+# XML and JSON parsing
+lxml==5.1.0
+pyyaml==6.0.1
+
+# Cryptography for dedup
+hashlib-compat==1.0.0
+
+# Logging and utilities
+python-dotenv==1.0.0
+tenacity==8.2.3
+
+# Ollama integration
+ollama==0.1.6
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3

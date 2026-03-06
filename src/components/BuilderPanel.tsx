@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
-import { getTemplates, templateToFiles, buildAndPushProject, getSkills, readFileContent, listTrackedProjects, countTokens } from '../lib/api';
+import { useState, useEffect, useCallback } from 'react';
+import { getTemplates, templateToFiles, buildAndPushProject, getSkills, listTrackedProjects, countTokens, getSystemMetrics, clearKvCache } from '../lib/api';
 import { useQwen } from '../hooks/useQwen';
-import type { ProjectTemplate, GeneratedFile, QwenLocation, Skill, ProjectRecord } from '../types';
+import type { ProjectTemplate, GeneratedFile, QwenLocation, Skill, ProjectRecord, SystemMetrics } from '../types';
 
 interface Props {
   qwenLocation: QwenLocation | null;
@@ -52,15 +52,24 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
   const [generating, setGenerating] = useState(false);
   const [streamPreview, setStreamPreview] = useState('');
   const [promptTokenCount, setPromptTokenCount] = useState<number>(0);
-  
-  const { generate, tokenProgress } = useQwen();
 
+  // System metrics state
+  const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  // Use useQwen for generate function and tokenProgress, use qwenLocation from props for location
+  const { generate, tokenProgress } = useQwen();
+  const location = qwenLocation;
+
+  // Load initial data
   useEffect(() => {
     getTemplates().then(setTemplates).catch(console.error);
     getSkills().then(setSkills).catch(console.error);
     listTrackedProjects().then(setPastProjects).catch(console.error);
   }, []);
 
+  // Update project name from path
   useEffect(() => {
     if (activeProjectPath) {
       const parts = activeProjectPath.split(/[/\\]/);
@@ -71,6 +80,7 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
     }
   }, [activeProjectPath]);
 
+  // Token count estimation
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (freeformPrompt) {
@@ -87,6 +97,50 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
     return () => clearTimeout(timer);
   }, [freeformPrompt]);
 
+  // Poll system metrics during generation
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    
+    if (generating) {
+      interval = setInterval(async () => {
+        try {
+          const metrics = await getSystemMetrics();
+          setSystemMetrics(metrics);
+        } catch (e) {
+          console.error('Failed to get metrics:', e);
+        }
+      }, 2000);
+    }
+    
+    return () => clearInterval(interval);
+  }, [generating]);
+
+  const refreshMetrics = useCallback(async () => {
+    setMetricsLoading(true);
+    try {
+      const metrics = await getSystemMetrics();
+      setSystemMetrics(metrics);
+    } catch (e) {
+      console.error('Failed to get metrics:', e);
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, []);
+
+  const handleClearCache = useCallback(async () => {
+    setClearingCache(true);
+    try {
+      const result = await clearKvCache();
+      alert(result);
+      // Refresh metrics after clearing
+      setTimeout(refreshMetrics, 1000);
+    } catch (e: any) {
+      alert(`Failed to clear cache: ${e.message}`);
+    } finally {
+      setClearingCache(false);
+    }
+  }, [refreshMetrics]);
+
   const generateFiles = async () => {
     if (!projectName.trim()) { setError('Project name is required'); return; }
     setError(null);
@@ -97,399 +151,480 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
       let files: GeneratedFile[] = [];
       const skillPrompts = skills
         .filter(s => selectedSkills.has(s.id))
-        .map(s => `[Skill: ${s.name}]\\n${s.prompt}`)
-        .join('\\n\\n');
+        .map(s => `[Skill: ${s.name}]\n${s.prompt}`);
 
-      let memoryPrompt = '';
-      if (useMemory && pastProjects.length > 0) {
-        memoryPrompt = `\\n\\nPast Projects Context:\\n` +
-          pastProjects.slice(0, 15).map(p => `- ${p.name} (Tech: ${p.tech_stack.join(', ')})`).join('\\n');
-      }
-
-      const enhancedSystemPrompt = skillPrompts
-        ? `${SYSTEM_PROMPT}\\n\\nAdditional Skills:\\n${skillPrompts}${memoryPrompt}`
-        : `${SYSTEM_PROMPT}${memoryPrompt}`;
-
-      if (activeProjectPath) {
-        if (!qwenLocation?.found) {
-          setError('Modifying a project requires a local AI model.');
-          return;
-        }
-        const prompt = `I am making modifications to "${projectName}". Requirements: ${freeformPrompt}. Return a JSON array of files to update or create.`;
-        const raw = await generate(prompt, enhancedSystemPrompt, tok => setStreamPreview(p => p + tok), activeProjectPath);
-        files = parseFilesFromResponse(raw);
-        if (!files.length) {
-          setError(`AI did not return valid files. Check console for raw response.`);
-          return;
-        }
-      } else if (mode === 'template' && selectedTemplate) {
+      if (mode === 'template' && selectedTemplate) {
+        const template = templates.find(t => t.id === selectedTemplate);
+        if (!template) throw new Error('Template not found');
         files = await templateToFiles(selectedTemplate, projectName, description);
-      } else if (mode === 'freeform') {
-        if (!qwenLocation?.found) {
-          setError('Freeform generation requires a local AI model.');
-          return;
-        }
-        const prompt = `Generate a complete software project called "${projectName}". Description: ${description}. Requirements: ${freeformPrompt}. Return a JSON array of ALL project files.`;
-        const raw = await generate(prompt, enhancedSystemPrompt, tok => setStreamPreview(p => p + tok), activeProjectPath);
-        files = parseFilesFromResponse(raw);
-        if (!files.length) {
-          setError(`AI did not return valid files. Check console for raw response.`);
-          return;
+      } else {
+        const fullPrompt = `${freeformPrompt}\n\nProject: ${projectName}\nDescription: ${description}`;
+        const combinedSystem = skillPrompts.length > 0
+          ? `${SYSTEM_PROMPT}\n\n${skillPrompts.join('\n\n')}`
+          : SYSTEM_PROMPT;
+
+        const result = await generate(fullPrompt, combinedSystem, setStreamPreview, null);
+        
+        // Parse JSON from result
+        const jsonMatch = result.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          files = JSON.parse(jsonMatch[0]);
+        } else {
+          throw new Error('Model did not return valid JSON. Try enabling JSON Strict Mode or using a larger model.');
         }
       }
 
       setGeneratedFiles(files);
-      setSelectedFile(files[0]?.path ?? null);
-      setStreamPreview('');
       setStep('preview');
     } catch (e: any) {
-      console.error('[generateFiles] Error:', e);
-      setError(String(e));
+      setError(e.message || 'Generation failed');
     } finally {
       setGenerating(false);
     }
   };
 
   const buildProject = async () => {
-    setStep('building');
     setError(null);
+    setGenerating(true);
+
     try {
       const result = await buildAndPushProject({
         project_name: projectName,
         description,
-        template_id: selectedTemplate || null,
-        freeform_prompt: freeformPrompt || null,
+        template_id: mode === 'template' ? selectedTemplate : null,
+        freeform_prompt: mode === 'freeform' ? freeformPrompt : null,
         generated_files: generatedFiles,
         private_repo: isPrivate,
         output_dir: outputDir,
       });
+
       setBuildResult({
         success: result.success,
         message: result.message,
-        url: result.repo_url ?? undefined,
+        url: result.repo_url || undefined,
       });
       setStep('done');
-      if (result.success) onProjectCreated();
+      onProjectCreated();
     } catch (e: any) {
-      setError(String(e));
-      setStep('preview');
+      setError(e.message || 'Build failed');
+    } finally {
+      setGenerating(false);
     }
   };
 
-  const reset = () => {
+  const resetForm = () => {
     setStep('setup');
-    setProjectName('');
-    setDescription('');
-    setFreeformPrompt('');
     setGeneratedFiles([]);
-    setSelectedFile(null);
     setBuildResult(null);
-    setError(null);
-    setSelectedTemplate('');
+    setStreamPreview('');
   };
 
-  const selectedFileContent = generatedFiles.find(f => f.path === selectedFile)?.content ?? '';
-
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <h1>{activeProjectPath ? `🛠️ Modifying Project` : `🏗️ Project Builder`}</h1>
-        <p>{activeProjectPath
-          ? `Generating modifications for ${projectName}`
-          : `Generate a modular project with AI and push to GitHub`}</p>
+    <div style={{ display: 'grid', gap: '24px' }}>
+      {/* System Metrics Bar */}
+      <div style={{
+        padding: '16px',
+        background: 'var(--surface1)',
+        borderRadius: '8px',
+        border: '1px solid var(--border)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h3 style={{ margin: 0, fontSize: '14px', color: 'var(--text-muted)' }}>📊 System Metrics</h3>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="btn btn-secondary" onClick={refreshMetrics} disabled={metricsLoading}>
+              {metricsLoading ? '...' : '🔄 Refresh'}
+            </button>
+            <button className="btn btn-secondary" onClick={handleClearCache} disabled={clearingCache}>
+              {clearingCache ? '...' : '🧹 Clear Cache to Boost Inference'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+          <MetricCard label="GPU Utilization" value={`${systemMetrics?.gpu_utilization.toFixed(1) || 0}%`} active={systemMetrics?.inference_active} />
+          <MetricCard label="VRAM Usage" value={`${systemMetrics?.vram_used_gb.toFixed(2) || 0} GB`} subtitle={`/ ${systemMetrics?.vram_total_gb.toFixed(1) || 0} GB`} />
+          <MetricCard label="CPU Utilization" value={`${systemMetrics?.cpu_utilization.toFixed(1) || 0}%`} />
+          <MetricCard label="System RAM" value={`${systemMetrics?.ram_used_gb.toFixed(2) || 0} GB`} subtitle={`/ ${systemMetrics?.ram_total_gb.toFixed(1) || 0} GB`} />
+          <MetricCard label="KV Cache Size" value={`${(systemMetrics?.kv_cache_size_mb || 0).toFixed(0)} MB`} highlight={!!systemMetrics?.kv_cache_size_mb} />
+          <MetricCard label="Active Model" value={systemMetrics?.model_name || 'None'} subtitle={systemMetrics?.inference_active ? '🟢 Loaded' : '⚪ Unloaded'} />
+        </div>
       </div>
 
-      {error && <div className="error-banner">⚠️ {error}</div>}
+      {/* Model Status */}
+      <div style={{
+        padding: '16px',
+        background: 'var(--surface1)',
+        borderRadius: '8px',
+        border: '1px solid var(--border)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h3 style={{ margin: 0, fontSize: '14px', color: 'var(--text-muted)' }}>🤖 Ollama Model Status</h3>
+        </div>
 
-      {step === 'setup' && (
-        <div className="builder-setup">
-          {!activeProjectPath && (
-            <div className="form-group">
-              <label>Project Name</label>
-              <input
-                className="input"
-                placeholder="my-awesome-project"
-                value={projectName}
-                onChange={e => setProjectName(e.target.value.replace(/\\s+/g, '-').toLowerCase())}
-              />
-            </div>
-          )}
-
-          {!activeProjectPath && (
-            <>
-              <div className="form-group">
-                <label>Description</label>
-                <input
-                  className="input"
-                  placeholder="A brief description of what this project does"
-                  value={description}
-                  onChange={e => setDescription(e.target.value)}
-                />
-              </div>
-
-              <div className="mode-toggle">
-                <button className={`mode-btn ${mode === 'template' ? 'active' : ''}`} onClick={() => setMode('template')}>
-                  📋 From Template
-                </button>
-                <button className={`mode-btn ${mode === 'freeform' ? 'active' : ''}`} onClick={() => setMode('freeform')}>
-                  🤖 AI Freeform
-                </button>
-              </div>
-
-              {mode === 'template' && (
-                <div className="template-grid">
-                  {templates.map(t => (
-                    <div
-                      key={t.id}
-                      className={`template-card ${selectedTemplate === t.id ? 'selected' : ''}`}
-                      onClick={() => setSelectedTemplate(t.id)}
-                    >
-                      <div className="template-name">{t.name}</div>
-                      <div className="template-lang">{t.language}</div>
-                      <div className="template-desc">{t.description}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="form-group">
-                <label>{mode === 'freeform' ? 'Describe what you want built' : 'Additional AI requirements (optional)'}</label>
-                <textarea
-                  className="textarea"
-                  rows={4}
-                  placeholder={mode === 'freeform' ? 'e.g. A REST API with authentication and database' : 'e.g. Add dark mode, use Tailwind CSS'}
-                  value={freeformPrompt}
-                  onChange={e => setFreeformPrompt(e.target.value)}
-                />
-              </div>
-            </>
-          )}
-
-          {activeProjectPath && (
-            <div className="form-group">
-              <label>What would you like to build or modify?</label>
-              <textarea
-                className="textarea"
-                rows={8}
-                placeholder="Describe the modifications..."
-                value={freeformPrompt}
-                onChange={e => setFreeformPrompt(e.target.value)}
-              />
-            </div>
-          )}
-
-          {/* Model Status */}
-          {qwenLocation?.found && (
-            <div style={{ padding: '8px 12px', background: 'var(--surface2)', borderRadius: '6px', fontSize: '13px', marginBottom: '12px' }}>
-              <span style={{ color: 'var(--green)' }}>✅</span>
-              <span style={{ color: 'var(--text)', marginLeft: '8px' }}>
-                Model: <strong>{qwenLocation.model || 'Unknown'}</strong>
-                <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>({qwenLocation.method})</span>
-              </span>
-            </div>
-          )}
-
-          {!qwenLocation?.found && qwenLocation?.method === 'ollama_no_model' && (
-            <div className="warning-box">
-              ⚠️ Ollama is installed but no models found. Run <code>ollama pull qwen2.5-coder</code>
-            </div>
-          )}
-
-          {!qwenLocation && (
-            <div className="warning-box">⏳ Scanning for models...</div>
-          )}
-
-          {/* Token Input Gauge */}
-          {freeformPrompt && (
-            <div style={{ padding: '8px 12px', background: 'var(--surface2)', borderRadius: '6px', fontSize: '12px', marginBottom: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>📝 Prompt tokens</span>
-                <span style={{ color: promptTokenCount > 8000 ? 'var(--red)' : 'var(--text)' }}>{promptTokenCount} tokens</span>
-              </div>
-              <div style={{ height: '4px', background: 'var(--surface3)', borderRadius: '2px' }}>
-                <div style={{ width: `${Math.min((promptTokenCount / 8000) * 100, 100)}%`, height: '100%', background: promptTokenCount > 8000 ? 'var(--red)' : 'var(--green)', borderRadius: '2px' }} />
+        <div style={{ 
+          padding: '16px',
+          background: location?.found ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+          borderRadius: '8px',
+          border: `2px solid ${location?.found ? 'var(--green)' : 'var(--red)'}`,
+        }}>
+          <div style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '8px' }}>
+            {location?.found ? '✅ Ollama Model Detected' : '⚠️ No Ollama Model Found'}
+          </div>
+          {location?.found ? (
+            <div style={{ fontSize: '14px', color: 'var(--text)' }}>
+              <div><strong>Model:</strong> {location.model || 'Using default'}</div>
+              <div><strong>Platform:</strong> Ollama</div>
+              <div style={{ marginTop: '8px', color: 'var(--green)', fontSize: '13px' }}>
+                ✓ Ready to generate projects with AI
               </div>
             </div>
-          )}
-
-          {/* Token Progress During Generation */}
-          {generating && tokenProgress && (
-            <div className="stream-preview">
-              <div className="stream-label">🤖 {qwenLocation?.model || 'Model'} is generating...</div>
-              <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-muted)' }}>
-                <span>📊 Tokens: {tokenProgress.tokens}</span>
-                <span>⏱️ {tokenProgress.elapsed.toFixed(1)}s</span>
-                <span>⚡ {(tokenProgress.tokens / Math.max(tokenProgress.elapsed, 0.1)).toFixed(1)} tok/s</span>
+          ) : (
+            <div style={{ fontSize: '14px', color: 'var(--text)' }}>
+              <div style={{ marginBottom: '8px' }}>
+                Install Ollama and pull any model (Qwen recommended for coding):
               </div>
-              <pre className="stream-text">{streamPreview || '▌'}</pre>
+              <code style={{ 
+                display: 'block', 
+                padding: '12px', 
+                background: 'var(--surface2)',
+                borderRadius: '6px',
+                fontFamily: 'monospace',
+                fontSize: '13px',
+              }}>
+                # Install: winget install Ollama.Ollama{"\n"}
+                # Recommended for coding: ollama pull qwen2.5-coder:7b{"\n"}
+                # Other options: ollama pull llama3.2{"\n"}
+                #              ollama pull mistral{"\n"}
+                #              ollama pull gemma2
+              </code>
             </div>
           )}
+        </div>
+      </div>
 
-          <button
-            className="btn btn-primary"
-            onClick={generateFiles}
-            disabled={generating || (!activeProjectPath && (!projectName || (mode === 'template' && !selectedTemplate)))}
-            style={{ marginTop: '16px' }}
-          >
-            {generating ? '⏳ Generating...' : (activeProjectPath ? '⚡ Generate Modifications' : '→ Generate Project')}
+      {/* Error Display */}
+      {error && (
+        <div style={{
+          padding: '12px 16px',
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid var(--red)',
+          borderRadius: '6px',
+          color: 'var(--red)',
+        }}>
+          ⚠️ {error}
+        </div>
+      )}
+
+      {/* Success Display */}
+      {buildResult && (
+        <div style={{
+          padding: '16px',
+          background: 'rgba(34, 197, 94, 0.1)',
+          border: '1px solid var(--green)',
+          borderRadius: '6px',
+        }}>
+          <div style={{ color: 'var(--green)', marginBottom: '8px', fontWeight: 'bold' }}>
+            ✅ {buildResult.message}
+          </div>
+          {buildResult.url && (
+            <a
+              href={buildResult.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-primary"
+              style={{ display: 'inline-block' }}
+            >
+              🚀 Open on GitHub
+            </a>
+          )}
+          <button className="btn btn-secondary" onClick={resetForm} style={{ marginLeft: '12px' }}>
+            📝 Create Another Project
           </button>
         </div>
       )}
 
-      {step === 'preview' && (
-        <div className="preview-panel">
-          <div className="preview-header">
-            <h2>Preview — {generatedFiles.length} files</h2>
-            <div className="preview-actions">
-              <button className="btn btn-secondary" onClick={() => setStep('setup')}>← Back</button>
-              <button className="btn btn-primary" onClick={buildProject}>
-                {activeProjectPath ? '🚀 Apply Changes' : '🚀 Build & Push to GitHub'}
-              </button>
-            </div>
+      {/* Step Indicator */}
+      {step === 'setup' && (
+        <>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className={`btn ${mode === 'template' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setMode('template')}
+            >
+              📋 From Template
+            </button>
+            <button
+              className={`btn ${mode === 'freeform' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setMode('freeform')}
+            >
+              🤖 AI Freeform
+            </button>
           </div>
 
-          <div className="preview-layout">
-            <div className="file-tree">
-              {generatedFiles.map(f => (
-                <div
-                  key={f.path}
-                  className={`file-item ${selectedFile === f.path ? 'active' : ''}`}
-                  onClick={() => setSelectedFile(f.path)}
-                >
-                  <span className="file-icon">📄</span>
-                  <span className="file-path">{f.path}</span>
+          <div style={{ display: 'grid', gap: '16px' }}>
+            <div>
+              <label style={labelStyle}>Project Name</label>
+              <input
+                type="text"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="e.g., cnc.woodwork"
+                style={inputStyle}
+              />
+            </div>
+
+            <div>
+              <label style={labelStyle}>Description</label>
+              <input
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="e.g., Autonomous CNC Woodworking Fabrication System"
+                style={inputStyle}
+              />
+            </div>
+
+            {mode === 'freeform' && (
+              <div>
+                <label style={labelStyle}>Describe what you want built</label>
+                <textarea
+                  value={freeformPrompt}
+                  onChange={(e) => setFreeformPrompt(e.target.value)}
+                  placeholder="Describe your project in detail..."
+                  rows={12}
+                  style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '13px' }}
+                />
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  📝 Prompt tokens: ~{promptTokenCount}
                 </div>
-              ))}
+              </div>
+            )}
+
+            {mode === 'template' && (
+              <div>
+                <label style={labelStyle}>Select Template</label>
+                <select
+                  value={selectedTemplate}
+                  onChange={(e) => setSelectedTemplate(e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="">Choose a template...</option>
+                  {templates.map(t => (
+                    <option key={t.id} value={t.id}>{t.name} - {t.description}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div>
+              <label style={labelStyle}>Skills & Memory</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '8px' }}>
+                {skills.map(skill => (
+                  <label key={skill.id} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 12px',
+                    background: selectedSkills.has(skill.id) ? 'var(--primary)' : 'var(--surface2)',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedSkills.has(skill.id)}
+                      onChange={(e) => {
+                        const newSkills = new Set(selectedSkills);
+                        if (e.target.checked) {
+                          newSkills.add(skill.id);
+                        } else {
+                          newSkills.delete(skill.id);
+                        }
+                        setSelectedSkills(newSkills);
+                      }}
+                    />
+                    <span style={{ fontSize: '13px' }}>{skill.name}</span>
+                  </label>
+                ))}
+              </div>
             </div>
-            <div className="file-content">
-              {selectedFile && (
-                <>
-                  <div className="file-content-header">{selectedFile}</div>
-                  <textarea
-                    className="code-editor"
-                    value={selectedFileContent}
-                    onChange={e => setGeneratedFiles(files =>
-                      files.map(f => f.path === selectedFile ? { ...f, content: e.target.value } : f)
-                    )}
-                  />
-                </>
-              )}
+
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={useMemory}
+                  onChange={(e) => setUseMemory(e.target.checked)}
+                />
+                Use Memory
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={isPrivate}
+                  onChange={(e) => setIsPrivate(e.target.checked)}
+                />
+                Private Repo
+              </label>
+              <div style={{ marginLeft: 'auto', fontSize: '13px', color: 'var(--text-muted)' }}>
+                Output: {outputDir}
+              </div>
             </div>
+
+            <button
+              className="btn btn-primary"
+              onClick={generateFiles}
+              disabled={generating || !projectName.trim()}
+              style={{ padding: '16px 32px', fontSize: '16px' }}
+            >
+              {generating ? '⏳ Generating...' : '✨ Generate Project'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Preview Step */}
+      {step === 'preview' && (
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <h3>📁 Generated Files Preview</h3>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '16px', minHeight: '400px' }}>
+            {/* File List */}
+            <div style={{
+              background: 'var(--surface1)',
+              borderRadius: '8px',
+              border: '1px solid var(--border)',
+              overflow: 'hidden',
+            }}>
+              <div style={{ padding: '12px', borderBottom: '1px solid var(--border)', fontWeight: 'bold' }}>
+                Files ({generatedFiles.length})
+              </div>
+              <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                {generatedFiles.map((file, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setSelectedFile(file.path)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      background: selectedFile === file.path ? 'var(--primary)' : 'transparent',
+                      border: 'none',
+                      borderBottom: '1px solid var(--border)',
+                      color: 'var(--text)',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}
+                  >
+                    {getFileIcon(file.path)} {file.path}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* File Content */}
+            <div style={{
+              background: 'var(--surface1)',
+              borderRadius: '8px',
+              border: '1px solid var(--border)',
+              overflow: 'hidden',
+            }}>
+              <div style={{ padding: '12px', borderBottom: '1px solid var(--border)', fontWeight: 'bold' }}>
+                {selectedFile || 'Select a file'}
+              </div>
+              <pre style={{
+                padding: '16px',
+                margin: 0,
+                overflow: 'auto',
+                fontSize: '12px',
+                fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap',
+                maxHeight: '500px',
+              }}>
+                {generatedFiles.find(f => f.path === selectedFile)?.content || 'Select a file to preview'}
+              </pre>
+            </div>
+          </div>
+
+          {/* Stream Preview */}
+          {streamPreview && (
+            <div style={{
+              padding: '12px',
+              background: 'var(--surface1)',
+              borderRadius: '8px',
+              border: '1px solid var(--border)',
+              maxHeight: '200px',
+              overflow: 'auto',
+              fontSize: '12px',
+              fontFamily: 'monospace',
+            }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
+                📡 Generation Stream ({tokenProgress?.tokens || 0} tokens, {tokenProgress?.elapsed.toFixed(1)}s)
+              </div>
+              {streamPreview}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button className="btn btn-secondary" onClick={resetForm} disabled={generating}>
+              ← Back
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={buildProject}
+              disabled={generating}
+              style={{ padding: '16px 32px' }}
+            >
+              {generating ? '⏳ Building & Pushing...' : '🚀 Build & Push to GitHub'}
+            </button>
           </div>
         </div>
       )}
 
+      {/* Building Step */}
       {step === 'building' && (
-        <div className="building-state">
-          <div className="spinner">⚙️</div>
-          <h2>Building & Pushing...</h2>
-          <p>Creating files, initializing git, creating GitHub repo, pushing...</p>
-        </div>
-      )}
-
-      {step === 'done' && buildResult && (
-        <div className="done-state">
-          <div className="done-icon">{buildResult.success ? '✅' : '❌'}</div>
-          <h2>{buildResult.success ? 'Project Created!' : 'Build Failed'}</h2>
-          <p>{buildResult.message}</p>
-          {buildResult.url && (
-            <a href={buildResult.url} target="_blank" rel="noreferrer" className="repo-link">
-              📁 {buildResult.url}
-            </a>
-          )}
-          <button className="btn btn-primary" onClick={reset}>Build Another Project</button>
+        <div style={{ textAlign: 'center', padding: '48px' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>⏳</div>
+          <h2>Building and pushing to GitHub...</h2>
+          <p style={{ color: 'var(--text-muted)' }}>
+            Files are being committed and pushed to your new repository
+          </p>
         </div>
       )}
     </div>
   );
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function parseFilesFromResponse(raw: string): GeneratedFile[] {
-  console.log('[parseFilesFromResponse] Raw response length:', raw.length);
-  console.log('[parseFilesFromResponse] Raw preview:', raw.slice(0, 500));
-
-  if (!raw || raw.trim().length === 0) return [];
-
-  // Strategy 1: Try direct JSON parse
-  try {
-    const cleaned = raw.replace(/```json\\s*/gi, '').replace(/```\\s*/g, '').trim();
-    const parsed = JSON.parse(cleaned);
-    
-    // Handle { "files": [...] } format
-    if (parsed && parsed.files && Array.isArray(parsed.files)) {
-      const validFiles = parsed.files
-        .filter((f: any) => f && f.path && typeof f.content === 'string')
-        .map((f: any) => ({ path: String(f.path), content: String(f.content) }));
-      console.log('[parseFilesFromResponse] Parsed { files: [...] } format:', validFiles.length);
-      return validFiles;
-    }
-    
-    // Handle direct array format [...]
-    if (Array.isArray(parsed)) {
-      const validFiles = parsed
-        .filter((f: any) => f && f.path && typeof f.content === 'string')
-        .map((f: any) => ({ path: String(f.path), content: String(f.content) }));
-      console.log('[parseFilesFromResponse] Parsed [...] format:', validFiles.length);
-      return validFiles;
-    }
-  } catch (e) {
-    console.log('[parseFilesFromResponse] Direct JSON parse failed:', e);
-  }
-
-  // Strategy 2: Extract { "files": [...] } using regex
-  try {
-    const filesMatch = raw.match(/"files"\\s*:\\s*(\\[.*?\\])/s);
-    if (filesMatch && filesMatch[1]) {
-      const parsed = JSON.parse(filesMatch[1]);
-      const validFiles = parsed
-        .filter((f: any) => f && f.path && typeof f.content === 'string')
-        .map((f: any) => ({ path: String(f.path), content: String(f.content) }));
-      console.log('[parseFilesFromResponse] Extracted files array:', validFiles.length);
-      return validFiles;
-    }
-  } catch (e) {
-    console.log('[parseFilesFromResponse] Files extraction failed:', e);
-  }
-
-  // Strategy 3: Extract JSON array from text
-  try {
-    const cleaned = raw.replace(/```json\\s*/gi, '').replace(/```\\s*/g, '').trim();
-    const start = cleaned.indexOf('[');
-    const end = cleaned.lastIndexOf(']');
-    if (start !== -1 && end !== -1 && end > start) {
-      const json = cleaned.slice(start, end + 1);
-      const parsed = JSON.parse(json);
-      const validFiles = parsed
-        .filter((f: any) => f && f.path && typeof f.content === 'string')
-        .map((f: any) => ({ path: String(f.path), content: String(f.content) }));
-      console.log('[parseFilesFromResponse] Extracted JSON array:', validFiles.length);
-      return validFiles;
-    }
-  } catch (e) {
-    console.log('[parseFilesFromResponse] Array extraction failed:', e);
-  }
-
-  // Strategy 4: Extract individual file objects
-  const files: GeneratedFile[] = [];
-  const seenPaths = new Set<string>();
-  const pathMatch = raw.match(/"path"\\s*:\\s*"([^"]+)"/g);
-  const contentMatch = raw.match(/"content"\\s*:\\s*"([^"]+)"/g);
-  
-  if (pathMatch && contentMatch && pathMatch.length === contentMatch.length) {
-    for (let i = 0; i < pathMatch.length; i++) {
-      const path = pathMatch[i].match(/"path"\\s*:\\s*"([^"]+)"/)?.[1];
-      const content = contentMatch[i].match(/"content"\\s*:\\s*"([^"]+)"/)?.[1];
-      if (path && content && !seenPaths.has(path)) {
-        files.push({ path, content: content.replace(/\\\\n/g, '\\n') });
-        seenPaths.add(path);
-      }
-    }
-  }
-
-  console.log('[parseFilesFromResponse] Regex extraction:', files.length);
-  return files;
+// Metric Card Component
+function MetricCard({ label, value, subtitle, active, highlight }: {
+  label: string;
+  value: string | number;
+  subtitle?: string;
+  active?: boolean;
+  highlight?: boolean;
+}) {
+  return (
+    <div style={{
+      padding: '12px',
+      background: active ? 'rgba(34, 197, 94, 0.1)' : highlight ? 'rgba(59, 130, 246, 0.1)' : 'var(--surface2)',
+      borderRadius: '6px',
+      border: active ? '1px solid var(--green)' : highlight ? '1px solid var(--blue)' : '1px solid var(--border)',
+    }}>
+      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px', textTransform: 'uppercase' }}>
+        {label}
+      </div>
+      <div style={{ fontSize: '18px', fontWeight: 'bold', color: active ? 'var(--green)' : highlight ? 'var(--blue)' : 'var(--text)' }}>
+        {value}
+      </div>
+      {subtitle && (
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+          {subtitle}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function getFileIcon(path: string): string {
@@ -500,3 +635,22 @@ function getFileIcon(path: string): string {
   };
   return icons[ext || ''] || '📄';
 }
+
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  marginBottom: '6px',
+  fontSize: '13px',
+  fontWeight: '500',
+  color: 'var(--text)',
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '12px',
+  background: 'var(--surface2)',
+  border: '1px solid var(--border)',
+  borderRadius: '6px',
+  color: 'var(--text)',
+  fontSize: '14px',
+  boxSizing: 'border-box',
+};

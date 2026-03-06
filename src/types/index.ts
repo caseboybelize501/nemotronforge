@@ -5,6 +5,12 @@ export interface QwenLocation {
   model: string | null;
 }
 
+export interface OllamaModel {
+  name: string;
+  size: string;
+  modified: string;
+}
+
 export interface GeneratedFile {
   path: string;
   content: string;
@@ -80,4 +86,28 @@ export interface ScanResult {
   recommended_for_chat: string | null;
   scan_paths: string[];
   ollama_models: string[];
+}
+
+export interface SandboxTest {
+  name: string;
+  passed: boolean;
+  output: string;
+  error: string;
+}
+
+export interface SandboxTestResult {
+  all_passed: boolean;
+  tests: SandboxTest[];
+}
+
+export interface SystemMetrics {
+  gpu_utilization: number;
+  vram_used_gb: number;
+  vram_total_gb: number;
+  cpu_utilization: number;
+  ram_used_gb: number;
+  ram_total_gb: number;
+  kv_cache_size_mb: number;
+  model_name: string;
+  inference_active: boolean;
 }

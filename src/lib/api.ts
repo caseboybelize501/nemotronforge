@@ -1,14 +1,21 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   QwenLocation, GeneratedFile, ProjectTemplate, BuildProjectRequest, BuildResult,
-  ProjectRecord, Skill, TokenCount, ModelInfo, ScanResult
+  ProjectRecord, Skill, TokenCount, ScanResult, OllamaModel, SandboxTestResult,
+  SystemMetrics
 } from '../types';
 
 export const locateQwen = () =>
   invoke<QwenLocation>('locate_qwen');
 
+export const scanOllamaModels = () =>
+  invoke<OllamaModel[]>('scan_ollama_models');
+
 export const qwenGenerate = (location: QwenLocation, prompt: string, system?: string, projectPath?: string | null) =>
   invoke<string>('qwen_generate', { location, prompt, system: system ?? null, projectPath: projectPath ?? null });
+
+export const ollamaChat = (model: string, prompt: string, system?: string) =>
+  invoke<string>('ollama_chat', { model, prompt, system: system ?? null });
 
 export const scanSystemModels = () =>
   invoke<ScanResult>('scan_system_models');
@@ -33,3 +40,12 @@ export const readFileContent = (path: string) =>
 
 export const listTrackedProjects = () =>
   invoke<ProjectRecord[]>('list_tracked_projects');
+
+export const testSandboxEnvironment = () =>
+  invoke<SandboxTestResult>('test_sandbox_environment');
+
+export const getSystemMetrics = () =>
+  invoke<SystemMetrics>('get_system_metrics');
+
+export const clearKvCache = () =>
+  invoke<string>('clear_kv_cache');

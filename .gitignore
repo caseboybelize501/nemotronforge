@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+target/
+
+# Build outputs
+dist/
+out/
+*.tgz
+
+# Environment variables (CONTAINS SECRETS)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Tauri
+src-tauri/target/
+
+# Testing
+coverage/
