@@ -1,0 +1,194 @@
+PROPRIETARY SOURCE-AVAILABLE LICENSE
+
+Copyright (c) 2025 Case Boy
+All Rights Reserved.
+
+This license governs use of the accompanying software, framework, documentation,
+and all associated files (collectively, the "Software"). By accessing, viewing,
+cloning, forking, downloading, or otherwise obtaining any portion of this
+Software, you agree to be bound by the terms of this License.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — WHAT IS PERMITTED WITHOUT A COMMERCIAL LICENSE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The only activity permitted without a Commercial License is:
+
+(a) VIEWING and READING the source code in-browser on the Licensor's
+official repository for personal education and reference only.
+
+No other rights are granted. Specifically, without a Commercial License
+you may NOT:
+
+— Clone, download, or copy this repository or any portion of it
+— Fork this repository, publicly or privately
+— Run, execute, or deploy the Software in any environment
+— Modify, adapt, or create derivative works
+— Use the Software for any purpose, commercial or non-commercial,
+beyond passive in-browser reading
+
+If you are unsure whether your intended use is permitted, assume it is
+not and contact the Licensor before proceeding.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — WHAT REQUIRES A PAID COMMERCIAL LICENSE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You MUST obtain a separate written Commercial License from the Licensor
+before doing any of the following:
+
+(a) Cloning, downloading, forking, or copying the Software in any form;
+
+(b) Running, executing, or deploying the Software in any environment —
+local, cloud, on-premise, or otherwise — for any purpose;
+
+(c) Using the Software, in whole or in part, in any product, service,
+tool, or workflow that generates revenue, directly or indirectly;
+
+(d) Incorporating the Software into a commercial application, SaaS
+platform, API service, or hosted offering of any kind;
+
+(e) Selling, sublicensing, renting, leasing, or transferring rights
+to the Software or any derivative work to any third party;
+
+(f) Using the Software within any organization, company, LLC,
+corporation, partnership, or other legal business entity,
+regardless of revenue, size, or commercial intent;
+
+(g) Using the Software to train, fine-tune, or distill any machine
+learning model intended for commercial use or distribution;
+
+(h) Reproducing, repackaging, or redistributing the Software under
+a different name, license, or branding.
+
+To obtain a Commercial License, contact: casebelize501@icloud.com
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3 — EXPLICIT PROHIBITIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The following are prohibited under all circumstances:
+
+(a) Removing, altering, or obscuring this License file or any
+copyright notice from any copy or portion of the Software;
+
+(b) Representing the Software or any derivative as your own
+original work;
+
+(c) Publishing benchmarks, performance comparisons, or capability
+analyses of the Software without prior written consent;
+
+(d) Using the Software in any way that violates applicable law.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4 — INTELLECTUAL PROPERTY & OWNERSHIP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The Software is and remains the exclusive intellectual property of the
+Licensor. This License does not transfer any copyright, patent,
+trademark, trade secret, or other intellectual property right.
+
+Making the Software publicly viewable on GitHub or any other platform
+does NOT constitute dedication to the public domain, does NOT constitute
+an open-source release, and does NOT waive any rights under copyright law.
+
+Any derivative work — any software, system, framework, or artifact that
+incorporates, adapts, or is substantially based on the Software — remains
+subject to this License in full, regardless of the degree of modification.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 5 — ENFORCEMENT & REMEDIES FOR VIOLATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+5.1 AUTOMATIC TERMINATION
+
+Any breach of this License results in IMMEDIATE AND AUTOMATIC
+termination of all rights granted herein — without notice, without
+a cure period, and without any action required by the Licensor.
+
+Upon termination, you must immediately cease all use of the Software
+and destroy all copies in your possession or control.
+
+5.2 DAMAGES
+
+Violations constitute copyright infringement and may also constitute
+misappropriation of trade secrets, breach of contract, and unfair
+business practices under applicable law.
+
+In the event of a violation, the Licensor is entitled to seek:
+
+(a) Immediate injunctive relief to stop unauthorized use;
+
+(b) Actual damages, including all profits derived from
+unauthorized use;
+
+(c) Statutory damages under the U.S. Copyright Act (17 U.S.C. § 504)
+of up to $150,000 per work infringed for willful infringement;
+
+(d) Attorney's fees and all costs of litigation;
+
+(e) Any other relief a court of competent jurisdiction deems just.
+
+5.3 WILLFULNESS PRESUMPTION
+
+Any party that accesses this repository in any way — including
+viewing, cloning, forking, or downloading — is conclusively presumed
+to have read and understood this License in full.
+
+Unauthorized use beyond passive viewing is therefore presumed WILLFUL,
+entitling the Licensor to seek maximum statutory damages of $150,000
+per infringed work without requiring proof of actual notice.
+
+5.4 REPORTING VIOLATIONS
+
+To report suspected violations: casebelize501@icloud.com
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 6 — NO WARRANTY / LIMITATION OF LIABILITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
+THE LICENSOR MAKES NO WARRANTIES REGARDING MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+
+THE LICENSOR SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+SPECIAL, PUNITIVE, OR CONSEQUENTIAL DAMAGES UNDER ANY CIRCUMSTANCES.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 7 — GOVERNING LAW & JURISDICTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This License is governed by the laws of the State of Texas,
+United States of America, without regard to conflict of law provisions.
+
+All legal actions shall be brought exclusively in the state or federal
+courts of Texas. You consent to personal jurisdiction in those courts
+by accessing this repository.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 8 — GENERAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+(a) This License constitutes the entire agreement between you and
+the Licensor and supersedes all prior agreements regarding
+the Software.
+
+(b) If any provision is found unenforceable, all remaining
+provisions continue in full force and effect.
+
+(c) Failure to enforce any provision is not a waiver of the right
+to enforce it in the future.
+
+(d) This License has NO expiration date and remains in effect
+in perpetuity unless superseded by a new version issued
+by the Licensor, which will not retroactively affect
+existing authorized Commercial License holders.
+
+(e) The Licensor reserves the right to offer the Software under
+different terms to different parties without affecting the
+terms of this License for others (dual licensing).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For commercial licensing inquiries: 
+casebelize501@icloud.com
