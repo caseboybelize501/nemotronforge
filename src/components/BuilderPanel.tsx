@@ -1,48 +1,32 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getTemplates, templateToFiles, buildAndPushProject, getSkills, listTrackedProjects, countTokens, getSystemMetrics, clearKvCache } from '../lib/api';
-import { useQwen } from '../hooks/useQwen';
-import type { ProjectTemplate, GeneratedFile, QwenLocation, Skill, ProjectRecord, SystemMetrics } from '../types';
+import { useState, useEffect, useRef } from 'react';
+import { getTemplates, templateToFiles, buildAndPushProject, listTrackedProjects, countTokens, getSystemMetrics, saveGithubToken, getGithubTokenStatus, clearGithubToken, getGithubUserInfo } from '../lib/api';
+import { useModel } from '../hooks/useModel';
+import { parseModelJSON } from '../lib/jsonCleaner';
+import type { ProjectTemplate, GeneratedFile, ModelLocation, ProjectRecord, SystemMetrics, GithubUserInfo } from '../types';
+
+// Hardcoded model - NO switching
+const HARD_CODED_MODEL = 'qwen3-coder:30b';
 
 interface Props {
-  qwenLocation: QwenLocation | null;
-  ghLoggedIn: boolean;
+  modelLocation: ModelLocation | null;
+  onGithubTokenSaved?: (token: string) => void;
   onProjectCreated: () => void;
   activeProjectPath: string | null;
 }
 
-const SYSTEM_PROMPT = `You are an expert software engineer and code generator.
-When asked to generate project files, respond ONLY with a valid JSON array of file objects.
-NO text before the opening bracket, NO text after the closing bracket.
-NO markdown code blocks. NO explanations.
+/**
+ * SYSTEM PROMPT - removed
+ */
+const SYSTEM_PROMPT = '';
 
-Format:
-[
-  {"path": "src/main.py", "content": "full file content"},
-  {"path": "README.md", "content": "# Title\\nDescription..."}
-]
-
-CRITICAL RULES:
-1. Output MUST start with [ and end with ]
-2. Each file object must have exactly two fields: "path" (string) and "content" (string)
-3. Escape ALL special JSON characters in content strings
-4. Include ALL files needed to run the project
-5. Always include a README.md
-6. Write complete, working, well-commented code`;
-
-type Step = 'setup' | 'preview' | 'building' | 'done';
-
-export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreated, activeProjectPath }: Props) {
-  const [step, setStep] = useState<Step>('setup');
+export default function BuilderPanel({ modelLocation, onProjectCreated, activeProjectPath }: Props) {
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [mode, setMode] = useState<'template' | 'freeform'>('template');
   const [projectName, setProjectName] = useState('');
   const [description, setDescription] = useState('');
   const [freeformPrompt, setFreeformPrompt] = useState('');
-  const [skills, setSkills] = useState<Skill[]>([]);
-  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
   const [pastProjects, setPastProjects] = useState<ProjectRecord[]>([]);
-  const [useMemory, setUseMemory] = useState(true);
   const [isPrivate, setIsPrivate] = useState(false);
   const [outputDir, setOutputDir] = useState('D:\\Users\\CASE\\Projects');
   const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
@@ -50,22 +34,62 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
   const [buildResult, setBuildResult] = useState<{ success: boolean; message: string; url?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [streamPreview, setStreamPreview] = useState('');
+  const [building, setBuilding] = useState(false);
+  const [rawOutput, setRawOutput] = useState<string | null>(null);
   const [promptTokenCount, setPromptTokenCount] = useState<number>(0);
+  const [generationStartTime, setGenerationStartTime] = useState<number>(0);
+  const [exportMode, setExportMode] = useState<'local' | 'github'>('github');
+  const [githubToken, setGithubToken] = useState('');
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [ghLoggedIn, setGhLoggedIn] = useState(false);
+  const [githubUser, setGithubUser] = useState<GithubUserInfo | null>(null);
 
-  // System metrics state
-  const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const [clearingCache, setClearingCache] = useState(false);
+  // Check GitHub token status and fetch user info on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const isLoggedIn = await getGithubTokenStatus().catch(() => false);
+      setGhLoggedIn(isLoggedIn);
+      if (isLoggedIn) {
+        const userInfo = await getGithubUserInfo().catch(console.error);
+        if (userInfo) {
+          setGithubUser(userInfo);
+        }
+      }
+    };
+    checkAuth();
+  }, []);
 
-  // Use useQwen for generate function and tokenProgress, use qwenLocation from props for location
-  const { generate, tokenProgress } = useQwen();
-  const location = qwenLocation;
+  // Use useModel for generate function
+  const { generate, streamedText, charCount, tokenCount, tokensPerSec, elapsedSec } = useModel();
+  const location = modelLocation;
+
+  // Detailed runtime metrics state
+  const [runtimeMetrics, setRuntimeMetrics] = useState<SystemMetrics | null>(null);
+
+  // Poll runtime metrics during generation only (every 3 seconds)
+  useEffect(() => {
+    if (!generating) {
+      setRuntimeMetrics(null);
+      return;
+    }
+
+    const pollMetrics = async () => {
+      try {
+        const metrics = await getSystemMetrics();
+        setRuntimeMetrics(metrics);
+      } catch (e) {
+        console.error('Failed to get runtime metrics:', e);
+      }
+    };
+
+    pollMetrics();
+    const interval = setInterval(pollMetrics, 3000);
+    return () => clearInterval(interval);
+  }, [generating]);
 
   // Load initial data
   useEffect(() => {
     getTemplates().then(setTemplates).catch(console.error);
-    getSkills().then(setSkills).catch(console.error);
     listTrackedProjects().then(setPastProjects).catch(console.error);
   }, []);
 
@@ -97,61 +121,19 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
     return () => clearTimeout(timer);
   }, [freeformPrompt]);
 
-  // Poll system metrics during generation
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    
-    if (generating) {
-      interval = setInterval(async () => {
-        try {
-          const metrics = await getSystemMetrics();
-          setSystemMetrics(metrics);
-        } catch (e) {
-          console.error('Failed to get metrics:', e);
-        }
-      }, 2000);
-    }
-    
-    return () => clearInterval(interval);
-  }, [generating]);
-
-  const refreshMetrics = useCallback(async () => {
-    setMetricsLoading(true);
-    try {
-      const metrics = await getSystemMetrics();
-      setSystemMetrics(metrics);
-    } catch (e) {
-      console.error('Failed to get metrics:', e);
-    } finally {
-      setMetricsLoading(false);
-    }
-  }, []);
-
-  const handleClearCache = useCallback(async () => {
-    setClearingCache(true);
-    try {
-      const result = await clearKvCache();
-      alert(result);
-      // Refresh metrics after clearing
-      setTimeout(refreshMetrics, 1000);
-    } catch (e: any) {
-      alert(`Failed to clear cache: ${e.message}`);
-    } finally {
-      setClearingCache(false);
-    }
-  }, [refreshMetrics]);
-
   const generateFiles = async () => {
     if (!projectName.trim()) { setError('Project name is required'); return; }
+
     setError(null);
     setGenerating(true);
-    setStreamPreview('');
+    setRawOutput(null);
+    setBuildResult(null);
+    setGeneratedFiles([]);
+    setSelectedFile(null);
+    setGenerationStartTime(Date.now());
 
     try {
       let files: GeneratedFile[] = [];
-      const skillPrompts = skills
-        .filter(s => selectedSkills.has(s.id))
-        .map(s => `[Skill: ${s.name}]\n${s.prompt}`);
 
       if (mode === 'template' && selectedTemplate) {
         const template = templates.find(t => t.id === selectedTemplate);
@@ -159,24 +141,37 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
         files = await templateToFiles(selectedTemplate, projectName, description);
       } else {
         const fullPrompt = `${freeformPrompt}\n\nProject: ${projectName}\nDescription: ${description}`;
-        const combinedSystem = skillPrompts.length > 0
-          ? `${SYSTEM_PROMPT}\n\n${skillPrompts.join('\n\n')}`
-          : SYSTEM_PROMPT;
 
-        const result = await generate(fullPrompt, combinedSystem, setStreamPreview, null);
-        
-        // Parse JSON from result
-        const jsonMatch = result.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          files = JSON.parse(jsonMatch[0]);
-        } else {
-          throw new Error('Model did not return valid JSON. Try enabling JSON Strict Mode or using a larger model.');
+        const result = await generate(fullPrompt, SYSTEM_PROMPT, undefined, null);
+        setRawOutput(result);
+
+        try {
+          files = parseModelJSON(result);
+        } catch (parseError: any) {
+          console.error('JSON Parse Error:', parseError);
+          throw parseError;
         }
       }
 
       setGeneratedFiles(files);
-      setStep('preview');
+      setGenerating(false);
+
+      console.log('[BuilderPanel] Generation complete! Files:', files.length);
+
+      // Auto-select first file for preview
+      if (files.length > 0) {
+        setSelectedFile(files[0].path);
+      }
+
+      // Scroll to the generated output section
+      setTimeout(() => {
+        const outputSection = document.getElementById('generated-output-section');
+        if (outputSection) {
+          outputSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 150);
     } catch (e: any) {
+      console.error('Generation error:', e);
       setError(e.message || 'Generation failed');
     } finally {
       setGenerating(false);
@@ -185,9 +180,25 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
 
   const buildProject = async () => {
     setError(null);
-    setGenerating(true);
+    setBuilding(true);
+
+    // Validate generated files exist
+    if (!generatedFiles || generatedFiles.length === 0) {
+      setError('No files generated. Please generate project files first.');
+      setBuilding(false);
+      return;
+    }
+
+    // Check if GitHub token is set (required for push)
+    if (!ghLoggedIn) {
+      setError('GitHub token not set. Please save your GitHub token in settings above.');
+      setShowTokenInput(true);
+      setBuilding(false);
+      return;
+    }
 
     try {
+      // Always push to GitHub AND save locally
       const result = await buildAndPushProject({
         project_name: projectName,
         description,
@@ -196,6 +207,7 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
         generated_files: generatedFiles,
         private_repo: isPrivate,
         output_dir: outputDir,
+        push_to_github: true,  // Always push to GitHub
       });
 
       setBuildResult({
@@ -203,159 +215,279 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
         message: result.message,
         url: result.repo_url || undefined,
       });
-      setStep('done');
       onProjectCreated();
     } catch (e: any) {
-      setError(e.message || 'Build failed');
+      console.error('Build error:', e);
+      setError(typeof e === 'string' ? e : (e?.message || 'Build failed'));
     } finally {
-      setGenerating(false);
+      setBuilding(false);
     }
   };
 
   const resetForm = () => {
-    setStep('setup');
     setGeneratedFiles([]);
     setBuildResult(null);
-    setStreamPreview('');
+    setRawOutput(null);
+    setBuilding(false);
+    setError(null);
+    setSelectedFile(null);
   };
+
+  const handleSaveGithubToken = async () => {
+    if (!githubToken.trim()) {
+      setError('GitHub token cannot be empty');
+      return;
+    }
+    try {
+      await saveGithubToken(githubToken);
+      const userInfo = await getGithubUserInfo().catch(console.error);
+      if (userInfo) {
+        setGithubUser(userInfo);
+        setGhLoggedIn(true);
+        setShowTokenInput(false);
+        setGithubToken('');
+        setError(null);
+      }
+    } catch (e: any) {
+      setError('Failed to save GitHub token: ' + (e.message || 'Unknown error'));
+    }
+  };
+
+  const handleClearGithubToken = async () => {
+    try {
+      await clearGithubToken();
+      setGhLoggedIn(false);
+      setGithubUser(null);
+      setError(null);
+    } catch (e: any) {
+      setError('Failed to clear GitHub token: ' + (e.message || 'Unknown error'));
+    }
+  };
+
+  const [showRawOutput, setShowRawOutput] = useState(false);
+
+  // Derived state: has generated code ready
+  const hasGeneratedCode = generatedFiles.length > 0 && !generating;
 
   return (
     <div style={{ display: 'grid', gap: '24px' }}>
-      {/* System Metrics Bar */}
-      <div style={{
-        padding: '16px',
-        background: 'var(--surface1)',
-        borderRadius: '8px',
-        border: '1px solid var(--border)',
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h3 style={{ margin: 0, fontSize: '14px', color: 'var(--text-muted)' }}>📊 System Metrics</h3>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="btn btn-secondary" onClick={refreshMetrics} disabled={metricsLoading}>
-              {metricsLoading ? '...' : '🔄 Refresh'}
-            </button>
-            <button className="btn btn-secondary" onClick={handleClearCache} disabled={clearingCache}>
-              {clearingCache ? '...' : '🧹 Clear Cache to Boost Inference'}
-            </button>
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-          <MetricCard label="GPU Utilization" value={`${systemMetrics?.gpu_utilization.toFixed(1) || 0}%`} active={systemMetrics?.inference_active} />
-          <MetricCard label="VRAM Usage" value={`${systemMetrics?.vram_used_gb.toFixed(2) || 0} GB`} subtitle={`/ ${systemMetrics?.vram_total_gb.toFixed(1) || 0} GB`} />
-          <MetricCard label="CPU Utilization" value={`${systemMetrics?.cpu_utilization.toFixed(1) || 0}%`} />
-          <MetricCard label="System RAM" value={`${systemMetrics?.ram_used_gb.toFixed(2) || 0} GB`} subtitle={`/ ${systemMetrics?.ram_total_gb.toFixed(1) || 0} GB`} />
-          <MetricCard label="KV Cache Size" value={`${(systemMetrics?.kv_cache_size_mb || 0).toFixed(0)} MB`} highlight={!!systemMetrics?.kv_cache_size_mb} />
-          <MetricCard label="Active Model" value={systemMetrics?.model_name || 'None'} subtitle={systemMetrics?.inference_active ? '🟢 Loaded' : '⚪ Unloaded'} />
-        </div>
-      </div>
-
-      {/* Model Status */}
-      <div style={{
-        padding: '16px',
-        background: 'var(--surface1)',
-        borderRadius: '8px',
-        border: '1px solid var(--border)',
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h3 style={{ margin: 0, fontSize: '14px', color: 'var(--text-muted)' }}>🤖 Ollama Model Status</h3>
-        </div>
-
-        <div style={{ 
-          padding: '16px',
-          background: location?.found ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-          borderRadius: '8px',
-          border: `2px solid ${location?.found ? 'var(--green)' : 'var(--red)'}`,
-        }}>
-          <div style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '8px' }}>
-            {location?.found ? '✅ Ollama Model Detected' : '⚠️ No Ollama Model Found'}
-          </div>
-          {location?.found ? (
-            <div style={{ fontSize: '14px', color: 'var(--text)' }}>
-              <div><strong>Model:</strong> {location.model || 'Using default'}</div>
-              <div><strong>Platform:</strong> Ollama</div>
-              <div style={{ marginTop: '8px', color: 'var(--green)', fontSize: '13px' }}>
-                ✓ Ready to generate projects with AI
-              </div>
-            </div>
-          ) : (
-            <div style={{ fontSize: '14px', color: 'var(--text)' }}>
-              <div style={{ marginBottom: '8px' }}>
-                Install Ollama and pull any model (Qwen recommended for coding):
-              </div>
-              <code style={{ 
-                display: 'block', 
-                padding: '12px', 
-                background: 'var(--surface2)',
-                borderRadius: '6px',
-                fontFamily: 'monospace',
-                fontSize: '13px',
-              }}>
-                # Install: winget install Ollama.Ollama{"\n"}
-                # Recommended for coding: ollama pull qwen2.5-coder:7b{"\n"}
-                # Other options: ollama pull llama3.2{"\n"}
-                #              ollama pull mistral{"\n"}
-                #              ollama pull gemma2
-              </code>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Error Display */}
       {error && (
         <div style={{
-          padding: '12px 16px',
+          padding: '16px',
           background: 'rgba(239, 68, 68, 0.1)',
           border: '1px solid var(--red)',
-          borderRadius: '6px',
+          borderRadius: '8px',
           color: 'var(--red)',
         }}>
-          ⚠️ {error}
+          <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
+            ⚠️ {error.split('\n')[0]}
+          </div>
+          <div style={{
+            fontSize: '13px',
+            whiteSpace: 'pre-wrap',
+            background: 'rgba(0,0,0,0.2)',
+            padding: '12px',
+            borderRadius: '6px',
+            marginTop: '8px',
+            maxHeight: '200px',
+            overflow: 'auto',
+            fontFamily: 'monospace',
+          }}>
+            {error.split('\n').slice(1).join('\n')}
+          </div>
+          {rawOutput && (
+            <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowRawOutput(true)}
+                style={{ padding: '8px 16px', fontSize: '13px' }}
+              >
+                📄 View Raw Model Output
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  navigator.clipboard.writeText(rawOutput);
+                }}
+                style={{ padding: '8px 16px', fontSize: '13px' }}
+              >
+                📋 Copy Raw Output
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Raw Output Modal */}
+      {showRawOutput && rawOutput && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '40px',
+        }}>
+          <div style={{
+            background: 'var(--surface1)',
+            borderRadius: '12px',
+            padding: '24px',
+            maxWidth: '900px',
+            width: '100%',
+            maxHeight: '80vh',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0 }}>📄 Raw Model Output</h3>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowRawOutput(false)}
+                style={{ padding: '6px 12px' }}
+              >
+                ✕ Close
+              </button>
+            </div>
+            <div style={{
+              flex: 1,
+              overflow: 'auto',
+              background: 'var(--surface2)',
+              borderRadius: '8px',
+              padding: '16px',
+              fontFamily: 'Consolas, Monaco, monospace',
+              fontSize: '12px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}>
+              {rawOutput}
+            </div>
+            <div style={{ marginTop: '12px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  navigator.clipboard.writeText(rawOutput);
+                }}
+                style={{ padding: '8px 16px' }}
+              >
+                📋 Copy to Clipboard
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  const blob = new Blob([rawOutput], { type: 'text/plain' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `raw-output-${Date.now()}.txt`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                style={{ padding: '8px 16px' }}
+              >
+                💾 Download as TXT
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Success Display */}
       {buildResult && (
         <div style={{
-          padding: '16px',
-          background: 'rgba(34, 197, 94, 0.1)',
-          border: '1px solid var(--green)',
-          borderRadius: '6px',
+          padding: '20px',
+          background: buildResult.success ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+          border: `2px solid ${buildResult.success ? 'var(--green)' : 'var(--red)'}`,
+          borderRadius: '10px',
         }}>
-          <div style={{ color: 'var(--green)', marginBottom: '8px', fontWeight: 'bold' }}>
-            ✅ {buildResult.message}
+          <div style={{ color: buildResult.success ? 'var(--green)' : 'var(--red)', marginBottom: '12px', fontWeight: 'bold', fontSize: '18px' }}>
+            {buildResult.success ? '✅' : '❌'} {buildResult.message}
           </div>
-          {buildResult.url && (
-            <a
-              href={buildResult.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-primary"
-              style={{ display: 'inline-block' }}
-            >
-              🚀 Open on GitHub
-            </a>
-          )}
-          <button className="btn btn-secondary" onClick={resetForm} style={{ marginLeft: '12px' }}>
-            📝 Create Another Project
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {buildResult.url && (
+              <a
+                href={buildResult.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ display: 'inline-block', padding: '10px 20px' }}
+              >
+                🚀 Open on GitHub
+              </a>
+            )}
+            <button className="btn btn-secondary" onClick={resetForm} style={{ padding: '10px 20px' }}>
+              📝 Create Another Project
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* GitHub Token Section */}
+      {!ghLoggedIn && (
+        <div style={{
+          padding: '16px',
+          background: 'rgba(59, 130, 246, 0.1)',
+          border: '1px solid var(--blue)',
+          borderRadius: '8px',
+        }}>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: 'var(--blue)' }}>🔑 GitHub Authentication Required</h3>
+          <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+            Enter your GitHub Personal Access Token (PAT) to push projects to GitHub.
+          </p>
+          <input
+            type="password"
+            value={githubToken}
+            onChange={(e) => setGithubToken(e.target.value)}
+            placeholder="ghp_..."
+            style={{ ...inputStyle, fontFamily: 'monospace', marginBottom: '12px' }}
+          />
+          <button className="btn btn-primary" onClick={handleSaveGithubToken} disabled={!githubToken.trim()}>
+            Save GitHub Token
           </button>
         </div>
       )}
 
-      {/* Step Indicator */}
-      {step === 'setup' && (
+      {ghLoggedIn && githubUser && (
+        <div style={{
+          padding: '12px',
+          background: 'rgba(34, 197, 94, 0.1)',
+          border: '1px solid var(--green)',
+          borderRadius: '8px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <div style={{ fontSize: '14px', color: 'var(--green)' }}>
+            ✅ Logged in as <strong>@{githubUser.login}</strong>
+          </div>
+          <button className="btn btn-secondary" onClick={handleClearGithubToken} style={{ padding: '6px 12px', fontSize: '13px' }}>
+            Logout
+          </button>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          SECTION 1: PROJECT SETUP (always visible when not building)
+          ═══════════════════════════════════════════════════════════════════════ */}
+      {!building && !buildResult && (
         <>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               className={`btn ${mode === 'template' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setMode('template')}
+              disabled={generating}
             >
               📋 From Template
             </button>
             <button
               className={`btn ${mode === 'freeform' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setMode('freeform')}
+              disabled={generating}
             >
               🤖 AI Freeform
             </button>
@@ -370,6 +502,7 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
                 onChange={(e) => setProjectName(e.target.value)}
                 placeholder="e.g., cnc.woodwork"
                 style={inputStyle}
+                disabled={generating}
               />
             </div>
 
@@ -381,6 +514,7 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="e.g., Autonomous CNC Woodworking Fabrication System"
                 style={inputStyle}
+                disabled={generating}
               />
             </div>
 
@@ -393,6 +527,7 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
                   placeholder="Describe your project in detail..."
                   rows={12}
                   style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '13px' }}
+                  disabled={generating}
                 />
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
                   📝 Prompt tokens: ~{promptTokenCount}
@@ -407,6 +542,7 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
                   value={selectedTemplate}
                   onChange={(e) => setSelectedTemplate(e.target.value)}
                   style={inputStyle}
+                  disabled={generating}
                 >
                   <option value="">Choose a template...</option>
                   {templates.map(t => (
@@ -416,52 +552,13 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
               </div>
             )}
 
-            <div>
-              <label style={labelStyle}>Skills & Memory</label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '8px' }}>
-                {skills.map(skill => (
-                  <label key={skill.id} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '8px 12px',
-                    background: selectedSkills.has(skill.id) ? 'var(--primary)' : 'var(--surface2)',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedSkills.has(skill.id)}
-                      onChange={(e) => {
-                        const newSkills = new Set(selectedSkills);
-                        if (e.target.checked) {
-                          newSkills.add(skill.id);
-                        } else {
-                          newSkills.delete(skill.id);
-                        }
-                        setSelectedSkills(newSkills);
-                      }}
-                    />
-                    <span style={{ fontSize: '13px' }}>{skill.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
             <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={useMemory}
-                  onChange={(e) => setUseMemory(e.target.checked)}
-                />
-                Use Memory
-              </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={isPrivate}
                   onChange={(e) => setIsPrivate(e.target.checked)}
+                  disabled={generating}
                 />
                 Private Repo
               </label>
@@ -470,23 +567,345 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
               </div>
             </div>
 
+            {/* Generate Button */}
             <button
               className="btn btn-primary"
               onClick={generateFiles}
               disabled={generating || !projectName.trim()}
               style={{ padding: '16px 32px', fontSize: '16px' }}
             >
-              {generating ? '⏳ Generating...' : '✨ Generate Project'}
+              {generating ? '⏳ Generating...' : hasGeneratedCode ? '🔄 Regenerate Project' : '✨ Generate Project'}
             </button>
           </div>
         </>
       )}
 
-      {/* Preview Step */}
-      {step === 'preview' && (
-        <div style={{ display: 'grid', gap: '16px' }}>
+      {/* ═══════════════════════════════════════════════════════════════════════
+          SECTION 2: GENERATION PROGRESS (inline, during active generation)
+          ═══════════════════════════════════════════════════════════════════════ */}
+      {generating && (() => {
+        // Performance ceiling ranges by model size (tok/s)
+        const getExpectedRange = (model: string): [number, number, string] => {
+          const m = model.toLowerCase();
+          if (m.includes('70b')) return [30, 50, '70B'];
+          if (m.includes('35b') || m.includes('32b') || m.includes('30b')) return [70, 100, '35B'];
+          if (m.includes('14b')) return [80, 140, '14B'];
+          if (m.includes('9b')) return [120, 200, '9B'];
+          if (m.includes('7b')) return [180, 300, '7B'];
+          return [80, 200, '?'];
+        };
+        const [expectedLow, expectedHigh, modelSizeLabel] = getExpectedRange(HARD_CODED_MODEL);
+
+        // GPU load interpretation
+        const getGpuInterpretation = (metrics: SystemMetrics | null): { label: string; color: string; emoji: string } => {
+          if (!metrics) return { label: 'Waiting for metrics...', color: 'var(--text-muted)', emoji: '⏳' };
+          const powerRatio = (metrics.gpu_power_limit_w ?? 0) > 0
+            ? (metrics.gpu_power_w ?? 0) / (metrics.gpu_power_limit_w ?? 1)
+            : 0;
+          if (powerRatio > 0.5) return { label: `Active inference (${(powerRatio * 100).toFixed(0)}% TDP)`, color: 'var(--green)', emoji: '🟢' };
+          if (powerRatio > 0.15) return { label: `Moderate GPU load (${(powerRatio * 100).toFixed(0)}% TDP)`, color: '#f59e0b', emoji: '🟡' };
+          if (metrics.inference_active) return { label: 'Low GPU load — model may be CPU-bound', color: '#f59e0b', emoji: '🟠' };
+          return { label: 'GPU idle', color: 'var(--text-muted)', emoji: '⚪' };
+        };
+
+        return (
+          <div data-generating-panel style={{
+            padding: '20px',
+            background: 'rgba(59, 130, 246, 0.05)',
+            borderRadius: '12px',
+            border: '2px solid var(--blue)',
+          }}>
+            {/* GPU Identity Header */}
+            <div style={{ fontWeight: 'bold', marginBottom: '16px', fontSize: '16px', color: 'var(--blue)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>CODE PROD. IN PROGRESS </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                {runtimeMetrics?.gpu_name && (
+                  <span style={{ fontSize: '12px', padding: '3px 8px', background: 'rgba(139, 92, 246, 0.15)', borderRadius: '4px', color: '#a78bfa' }}>
+                    🎮 {runtimeMetrics.gpu_name}
+                  </span>
+                )}
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Model: {HARD_CODED_MODEL}
+                </span>
+              </div>
+            </div>
+
+            {/* Primary Metrics Row */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', fontSize: '13px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ padding: '4px 10px', background: 'var(--primary)', borderRadius: '4px' }}>
+                📝 <strong>{charCount.toLocaleString()}</strong> chars
+              </span>
+              <span style={{ padding: '4px 10px', background: 'var(--primary)', borderRadius: '4px' }}>
+                🎯 <strong>{tokenCount.toLocaleString()}</strong> tokens
+              </span>
+              <span style={{ padding: '4px 10px', background: 'var(--primary)', borderRadius: '4px', minWidth: '100px' }}>
+                ⚡ <strong style={{ minWidth: '60px', display: 'inline-block' }}>{tokensPerSec.toLocaleString()}</strong> tok/s
+              </span>
+              <span style={{ padding: '4px 10px', background: 'var(--surface2)', borderRadius: '4px' }}>
+                ⏱️ <strong>{Math.floor(elapsedSec / 60)}:{(elapsedSec % 60).toString().padStart(2, '0')}</strong> elapsed
+              </span>
+              {/* Performance Ceiling Indicator */}
+              <span style={{
+                padding: '4px 10px',
+                background: tokensPerSec >= expectedLow ? 'rgba(34, 197, 94, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                borderRadius: '4px',
+                border: `1px solid ${tokensPerSec >= expectedLow ? 'var(--green)' : '#f59e0b'}`,
+              }}>
+                📊 {modelSizeLabel}: <strong>{tokensPerSec}</strong>/{expectedLow}-{expectedHigh} tok/s
+                <span style={{ marginLeft: '4px' }}>{tokensPerSec >= expectedLow ? '✅' : '⚠️'}</span>
+              </span>
+            </div>
+
+            {/* Model Configuration Panel */}
+            {runtimeMetrics && (
+              <div style={{
+                marginBottom: '12px',
+                padding: '10px 14px',
+                background: 'var(--surface1)',
+                borderRadius: '6px',
+                border: '1px solid var(--border)',
+                display: 'flex',
+                gap: '16px',
+                flexWrap: 'wrap',
+                fontSize: '12px',
+                alignItems: 'center',
+              }}>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  🏷️ <strong>{runtimeMetrics.model_name || HARD_CODED_MODEL}</strong>
+                </span>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  🧠 Layers: <strong>{runtimeMetrics.gpu_layers_current}/{runtimeMetrics.gpu_layers_total} GPU</strong>
+                </span>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  📦 Batch: <strong>{runtimeMetrics.batch_size}</strong>
+                </span>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  📐 Context: <strong>64K</strong>
+                </span>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  💾 KV Cache: <strong>{(runtimeMetrics.kv_cache_used_mb ?? 0).toFixed(0)} MB</strong>
+                </span>
+                {(runtimeMetrics.gpu_fan_speed_pct ?? 0) > 0 && (
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    🌀 Fan: <strong>{(runtimeMetrics.gpu_fan_speed_pct ?? 0).toFixed(0)}%</strong>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* NVIDIA GPU Statistics Table */}
+            {runtimeMetrics && (
+              <div style={{
+                marginBottom: '12px',
+                padding: '14px',
+                background: 'var(--surface1)',
+                borderRadius: '8px',
+                border: '1px solid var(--border)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <span>🎮 {runtimeMetrics.gpu_name || 'NVIDIA'} — GPU Statistics</span>
+                  {/* GPU Utilization Interpretation Badge */}
+                  <span style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '11px',
+                    fontWeight: 'bold',
+                    background: getGpuInterpretation(runtimeMetrics).color === 'var(--green)' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                    color: getGpuInterpretation(runtimeMetrics).color === 'var(--green)' ? 'var(--green)' : '#f59e0b',
+                    border: `1px solid ${getGpuInterpretation(runtimeMetrics).color === 'var(--green)' ? 'var(--green)' : '#f59e0b'}`,
+                  }}>
+                    {getGpuInterpretation(runtimeMetrics).emoji} {getGpuInterpretation(runtimeMetrics).label}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px', fontSize: '12px' }}>
+                  {/* GPU Core Clock */}
+                  <div>
+                    <div style={{ color: 'var(--text-muted)', marginBottom: '2px' }}>GPU Clock</div>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{(runtimeMetrics.gpu_core_clock_mhz ?? 0).toFixed(0)} MHz</div>
+                  </div>
+                  {/* GPU Power with TDP bar */}
+                  <div>
+                    <div style={{ color: 'var(--text-muted)', marginBottom: '2px' }}>GPU Power</div>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{(runtimeMetrics.gpu_power_w ?? 0).toFixed(0)}W
+                      {(runtimeMetrics.gpu_power_limit_w ?? 0) > 0 && (
+                        <span style={{ fontSize: '10px', fontWeight: 'normal', color: 'var(--text-muted)' }}> / {(runtimeMetrics.gpu_power_limit_w ?? 0).toFixed(0)}W</span>
+                      )}
+                    </div>
+                    {(runtimeMetrics.gpu_power_limit_w ?? 0) > 0 && (
+                      <div style={{ marginTop: '4px', height: '4px', background: 'var(--surface2)', borderRadius: '2px', overflow: 'hidden' }}>
+                        <div style={{
+                          height: '100%',
+                          width: `${Math.min(100, ((runtimeMetrics.gpu_power_w ?? 0) / (runtimeMetrics.gpu_power_limit_w ?? 1)) * 100)}%`,
+                          background: ((runtimeMetrics.gpu_power_w ?? 0) / (runtimeMetrics.gpu_power_limit_w ?? 1)) > 0.8 ? '#ef4444' : 'var(--blue)',
+                          transition: 'width 0.3s ease',
+                        }} />
+                      </div>
+                    )}
+                  </div>
+                  {/* GPU Temperature */}
+                  <div>
+                    <div style={{ color: 'var(--text-muted)', marginBottom: '2px' }}>GPU Temperature</div>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold', color: (runtimeMetrics.gpu_temp_c ?? 0) > 80 ? '#ef4444' : (runtimeMetrics.gpu_temp_c ?? 0) > 65 ? '#f59e0b' : 'var(--text)' }}>
+                      {(runtimeMetrics.gpu_temp_c ?? 0).toFixed(0)} °C
+                    </div>
+                  </div>
+                  {/* GPU Memory Clock */}
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{(runtimeMetrics.gpu_mem_clock_mhz ?? 0).toFixed(0)} MHz</div>
+                  </div>
+                  {/* GPU Utilization */}
+                  <div>
+                    <div style={{ color: 'var(--text-muted)', marginBottom: '2px' }}>GPU Utilization</div>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold', color: runtimeMetrics.gpu_utilization > 70 ? 'var(--green)' : runtimeMetrics.gpu_utilization > 40 ? '#f59e0b' : '#ef4444' }}>
+                      {runtimeMetrics.gpu_utilization.toFixed(0)} %
+                    </div>
+                  </div>
+                  {/* VRAM with bar */}
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                      {(runtimeMetrics.vram_used_gb ?? 0).toFixed(1)}
+                      <span style={{ fontSize: '10px', fontWeight: 'normal', color: 'var(--text-muted)' }}> / {(runtimeMetrics.vram_total_gb ?? 0).toFixed(0)} GB</span>
+                    </div>
+                    {(runtimeMetrics.vram_total_gb ?? 0) > 0 && (
+                      <div style={{ marginTop: '4px', height: '4px', background: 'var(--surface2)', borderRadius: '2px', overflow: 'hidden' }}>
+                        <div style={{
+                          height: '100%',
+                          width: `${Math.min(100, ((runtimeMetrics.vram_used_gb ?? 0) / (runtimeMetrics.vram_total_gb ?? 1)) * 100)}%`,
+                          background: ((runtimeMetrics.vram_used_gb ?? 0) / (runtimeMetrics.vram_total_gb ?? 1)) > 0.85 ? '#ef4444' : 'var(--green)',
+                          transition: 'width 0.3s ease',
+                        }} />
+                      </div>
+                    )}
+                  </div>
+                  {/* CPU Utilization */}
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{runtimeMetrics.cpu_utilization.toFixed(0)} %</div>
+                  </div>
+                  {/* GPU Fan Speed */}
+                  {(runtimeMetrics.gpu_fan_speed_pct ?? 0) > 0 && (
+                    <div>
+                      <div style={{ color: 'var(--text-muted)', marginBottom: '2px' }}>GPU Fan</div>
+                      <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{(runtimeMetrics.gpu_fan_speed_pct ?? 0).toFixed(0)} %</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* RAM and Swap Usage */}
+            {runtimeMetrics && (
+              <div style={{
+                marginBottom: '12px',
+                padding: '14px',
+                background: 'var(--surface1)',
+                borderRadius: '8px',
+                border: '1px solid var(--border)',
+                display: 'grid',
+                gridTemplateColumns: (runtimeMetrics.swap_total_gb ?? 0) > 0 ? '1fr 1fr' : '1fr',
+                gap: '16px',
+              }}>
+                {/* System RAM */}
+                <div>
+                  <div style={{ color: 'var(--text-muted)', marginBottom: '6px', fontSize: '12px' }}>System RAM</div>
+                  <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    {(runtimeMetrics.ram_used_gb ?? 0).toFixed(1)} / {(runtimeMetrics.ram_total_gb ?? 0).toFixed(0)} GB
+                    <span style={{ fontSize: '12px', fontWeight: 'normal', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                      ({((runtimeMetrics.ram_used_gb ?? 0) / (runtimeMetrics.ram_total_gb ?? 1) * 100).toFixed(0)}%)
+                    </span>
+                  </div>
+                  <div style={{ height: '6px', background: 'var(--surface2)', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${Math.min(100, ((runtimeMetrics.ram_used_gb ?? 0) / (runtimeMetrics.ram_total_gb ?? 1)) * 100)}%`,
+                      background: ((runtimeMetrics.ram_used_gb ?? 0) / (runtimeMetrics.ram_total_gb ?? 1)) > 0.85 ? '#ef4444' : 'var(--blue)',
+                      transition: 'width 0.3s ease',
+                    }} />
+                  </div>
+                </div>
+
+                {/* Swap Usage */}
+                {(runtimeMetrics.swap_total_gb ?? 0) > 0 && (
+                  <div>
+                    <div style={{ color: 'var(--text-muted)', marginBottom: '6px', fontSize: '12px' }}>Swap</div>
+                    <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '4px', color: (runtimeMetrics.swap_used_gb ?? 0) > 1 ? '#f59e0b' : 'var(--text)' }}>
+                      {(runtimeMetrics.swap_used_gb ?? 0).toFixed(1)} / {(runtimeMetrics.swap_total_gb ?? 0).toFixed(0)} GB
+                    </div>
+                    <div style={{ height: '6px', background: 'var(--surface2)', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${Math.min(100, ((runtimeMetrics.swap_used_gb ?? 0) / (runtimeMetrics.swap_total_gb ?? 1)) * 100)}%`,
+                        background: (runtimeMetrics.swap_used_gb ?? 0) > 1 ? '#f59e0b' : 'var(--green)',
+                        transition: 'width 0.3s ease',
+                      }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Secondary Metrics Row */}
+            {runtimeMetrics && (
+              <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+                <span>
+                  ⚙️ Core: <strong>{(runtimeMetrics.gpu_core_clock_mhz ?? 0).toFixed(0)} MHz</strong>
+                </span>
+                <span>
+                  📊 Mem: <strong>{(runtimeMetrics.gpu_mem_clock_mhz ?? 0).toFixed(0)} MHz</strong>
+                </span>
+                <span>
+                  🧠 Layers: <strong>{runtimeMetrics.gpu_layers_current ?? 0}/{runtimeMetrics.gpu_layers_total ?? 0}</strong>
+                </span>
+                <span>
+                  📝 Seq: <strong>{runtimeMetrics.seq_len ?? 0}</strong>
+                </span>
+                <span>
+                  🗂️ Proc Mem: <strong>{(runtimeMetrics.process_memory_mb ?? 0).toFixed(0)}MB</strong>
+                </span>
+                {(runtimeMetrics.vram_free_gb ?? 0) > 0 && (
+                  <span>
+                    🆓 VRAM Free: <strong>{(runtimeMetrics.vram_free_gb ?? 0).toFixed(1)} GB</strong>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* CPU Per-Core Utilization */}
+            {runtimeMetrics && (runtimeMetrics.cpu_per_core ?? []).length > 0 && (
+              <div style={{
+                marginTop: '12px',
+                padding: '12px',
+                background: 'var(--surface2)',
+                borderRadius: '6px',
+              }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                  💻 CPU Cores ({runtimeMetrics.cpu_utilization.toFixed(0)}% total):
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(16, 1fr)', gap: '2px' }}>
+                  {(runtimeMetrics.cpu_per_core ?? []).slice(0, 16).map((core, i) => (
+                    <div
+                      key={i}
+                      title={`Core ${i}: ${core.toFixed(0)}%`}
+                      style={{
+                        height: '20px',
+                        background: core > 70 ? 'var(--green)' : core > 30 ? '#f59e0b' : 'var(--surface1)',
+                        borderRadius: '2px',
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          SECTION 3: GENERATED OUTPUT (file preview + build)
+          ═══════════════════════════════════════════════════════════════════════ */}
+      {hasGeneratedCode && !building && (
+        <div id="generated-output-section" style={{ display: 'grid', gap: '16px' }}>
           <h3>📁 Generated Files Preview</h3>
-          
+
           <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '16px', minHeight: '400px' }}>
             {/* File List */}
             <div style={{
@@ -548,79 +967,26 @@ export default function BuilderPanel({ qwenLocation, ghLoggedIn, onProjectCreate
             </div>
           </div>
 
-          {/* Stream Preview */}
-          {streamPreview && (
-            <div style={{
-              padding: '12px',
-              background: 'var(--surface1)',
-              borderRadius: '8px',
-              border: '1px solid var(--border)',
-              maxHeight: '200px',
-              overflow: 'auto',
-              fontSize: '12px',
-              fontFamily: 'monospace',
-            }}>
-              <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
-                📡 Generation Stream ({tokenProgress?.tokens || 0} tokens, {tokenProgress?.elapsed.toFixed(1)}s)
-              </div>
-              {streamPreview}
-            </div>
-          )}
-
           <div style={{ display: 'flex', gap: '12px' }}>
-            <button className="btn btn-secondary" onClick={resetForm} disabled={generating}>
-              ← Back
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                setGeneratedFiles([]);
+                setSelectedFile(null);
+              }}
+              disabled={building}
+            >
+              ← Regenerate
             </button>
             <button
               className="btn btn-primary"
               onClick={buildProject}
-              disabled={generating}
+              disabled={building || !ghLoggedIn}
               style={{ padding: '16px 32px' }}
             >
-              {generating ? '⏳ Building & Pushing...' : '🚀 Build & Push to GitHub'}
+              {building ? '⏳ Building & Pushing...' : '🚀 Build & Push to GitHub'}
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Building Step */}
-      {step === 'building' && (
-        <div style={{ textAlign: 'center', padding: '48px' }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>⏳</div>
-          <h2>Building and pushing to GitHub...</h2>
-          <p style={{ color: 'var(--text-muted)' }}>
-            Files are being committed and pushed to your new repository
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Metric Card Component
-function MetricCard({ label, value, subtitle, active, highlight }: {
-  label: string;
-  value: string | number;
-  subtitle?: string;
-  active?: boolean;
-  highlight?: boolean;
-}) {
-  return (
-    <div style={{
-      padding: '12px',
-      background: active ? 'rgba(34, 197, 94, 0.1)' : highlight ? 'rgba(59, 130, 246, 0.1)' : 'var(--surface2)',
-      borderRadius: '6px',
-      border: active ? '1px solid var(--green)' : highlight ? '1px solid var(--blue)' : '1px solid var(--border)',
-    }}>
-      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px', textTransform: 'uppercase' }}>
-        {label}
-      </div>
-      <div style={{ fontSize: '18px', fontWeight: 'bold', color: active ? 'var(--green)' : highlight ? 'var(--blue)' : 'var(--text)' }}>
-        {value}
-      </div>
-      {subtitle && (
-        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-          {subtitle}
         </div>
       )}
     </div>

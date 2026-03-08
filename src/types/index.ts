@@ -1,14 +1,8 @@
-export interface QwenLocation {
+export interface ModelLocation {
   found: boolean;
-  method: 'ollama' | 'lmstudio' | 'binary' | 'ollama_no_model' | 'none';
+  method: 'llama.cpp' | 'lmstudio' | 'binary' | 'none';
   path: string | null;
   model: string | null;
-}
-
-export interface OllamaModel {
-  name: string;
-  size: string;
-  modified: string;
 }
 
 export interface GeneratedFile {
@@ -49,6 +43,7 @@ export interface BuildProjectRequest {
   generated_files: GeneratedFile[];
   private_repo: boolean;
   output_dir: string;
+  push_to_github?: boolean;
 }
 
 export interface BuildResult {
@@ -74,7 +69,7 @@ export interface ModelInfo {
   model_type: 'gguf' | 'ggml' | 'safetensors' | 'pytorch' | 'onnx' | 'other';
   estimated_params: string;
   quality_score: number;
-  source: 'ollama' | 'lmstudio' | 'localfile';
+  source: 'llama.cpp' | 'lmstudio' | 'localfile';
 }
 
 export interface ScanResult {
@@ -85,7 +80,6 @@ export interface ScanResult {
   recommended_for_coding: string | null;
   recommended_for_chat: string | null;
   scan_paths: string[];
-  ollama_models: string[];
 }
 
 export interface SandboxTest {
@@ -110,4 +104,33 @@ export interface SystemMetrics {
   kv_cache_size_mb: number;
   model_name: string;
   inference_active: boolean;
+  gpu_power_w?: number;
+  gpu_temp_c?: number;
+  gpu_core_clock_mhz?: number;
+  gpu_mem_clock_mhz?: number;
+  gpu_layers_current?: number;
+  gpu_layers_total?: number;
+  batch_size?: number;
+  seq_len?: number;
+  kv_cache_used_mb?: number;
+  cpu_per_core?: number[];
+  process_memory_mb?: number;
+  gpu_name?: string;
+  gpu_fan_speed_pct?: number;
+  gpu_power_limit_w?: number;
+  vram_free_gb?: number;
+  swap_used_gb?: number;
+  swap_total_gb?: number;
+}
+
+export interface LlamaServerStatus {
+  running: boolean;
+  url: string;
+  healthy: boolean;
+  message: string;
+}
+
+export interface GithubUserInfo {
+  login: string;
+  avatar_url: string;
 }

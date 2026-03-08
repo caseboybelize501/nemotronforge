@@ -1,0 +1,247 @@
+{
+  "models": [
+    {
+      "path": "D:\\models\\qwen2.5-coder-7b.gguf",
+      "name": "Qwen 2.5 Coder 7B",
+      "size_category": "small",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 4096,
+        "ubatch_size": 1024,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\models\\qwen3-coder-30b-q4.gguf",
+      "name": "Qwen 3 Coder 30B (Q4 Quantized)",
+      "size_category": "large",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "ctx_size": 32768,
+        "cache_type_k": "q8_0",
+        "cache_type_v": "q8_0",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\models\\qwen3-coder-30b.gguf",
+      "name": "Qwen 3 Coder 30B",
+      "size_category": "large",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\models\\glm-4.7-flash.gguf",
+      "name": "GLM-4 7B Flash",
+      "size_category": "small",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 4096,
+        "ubatch_size": 1024,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\models\\nemotron-3-nano-30b.gguf",
+      "name": "Nemotron 3 Nano 30B",
+      "size_category": "large",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\models\\qwen2.5-coder-32b.gguf",
+      "name": "Qwen 2.5 Coder 32B",
+      "size_category": "large",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\models\\qwen3-coder-30b.gguf",
+      "name": "Qwen 3 Coder 30B",
+      "size_category": "large",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\models\\qwen3.5-27b.gguf",
+      "name": "Qwen 3.5 27B",
+      "size_category": "medium",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 4096,
+        "ubatch_size": 1024,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\models\\qwen3.5-35b-a3b.gguf",
+      "name": "Qwen 3.5 35B A3B",
+      "size_category": "large",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\models\\qwen3.5-35b.gguf",
+      "name": "Qwen 3.5 35B",
+      "size_category": "large",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\models\\qwen3.5-9b.gguf",
+      "name": "Qwen 3.5 9B",
+      "size_category": "small",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 4096,
+        "ubatch_size": 1024,
+        "ctx_size": 32768,
+        "cache_type_k": "f16",
+        "cache_type_v": "f16",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\AppData\\Roaming\\Block\\goose\\data\\models\\Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf",
+      "name": "Mistral Small 24B Instruct (Q4)",
+      "size_category": "medium",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 4096,
+        "ubatch_size": 1024,
+        "ctx_size": 32768,
+        "cache_type_k": "q8_0",
+        "cache_type_v": "q8_0",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\Users\\CASE\\AppData\\Roaming\\Block\\goose\\data\\models\\Qwen3-Coder-30B-A3B-Instruct-Q8_0.gguf",
+      "name": "Qwen 3 Coder 30B A3B Instruct (Q8)",
+      "size_category": "large",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "ctx_size": 32768,
+        "cache_type_k": "q8_0",
+        "cache_type_v": "q8_0",
+        "flash_attn": true
+      }
+    },
+    {
+      "path": "D:\\AI\\models\\mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+      "name": "Mistral 7B Instruct v0.2 (Q4)",
+      "size_category": "small",
+      "params": {
+        "ngl": 99,
+        "threads": 16,
+        "batch_size": 4096,
+        "ubatch_size": 1024,
+        "ctx_size": 32768,
+        "cache_type_k": "q8_0",
+        "cache_type_v": "q8_0",
+        "flash_attn": true
+      }
+    }
+  ],
+  "default_model": "D:\\Users\\CASE\\models\\qwen3-coder-30b.gguf",
+  "size_category_defaults": {
+    "small": {
+      "ngl": 99,
+      "threads": 16,
+      "batch_size": 4096,
+      "ubatch_size": 1024,
+      "ctx_size": 32768,
+      "cache_type_k": "f16",
+      "cache_type_v": "f16",
+      "flash_attn": true
+    },
+    "medium": {
+      "ngl": 99,
+      "threads": 16,
+      "batch_size": 4096,
+      "ubatch_size": 1024,
+      "ctx_size": 32768,
+      "cache_type_k": "f16",
+      "cache_type_v": "f16",
+      "flash_attn": true
+    },
+    "large": {
+      "ngl": 99,
+      "threads": 16,
+      "batch_size": 2048,
+      "ubatch_size": 512,
+      "ctx_size": 32768,
+      "cache_type_k": "f16",
+      "cache_type_v": "f16",
+      "flash_attn": true
+    }
+  }
+}

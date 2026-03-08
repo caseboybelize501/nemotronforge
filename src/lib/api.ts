@@ -1,21 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  QwenLocation, GeneratedFile, ProjectTemplate, BuildProjectRequest, BuildResult,
-  ProjectRecord, Skill, TokenCount, ScanResult, OllamaModel, SandboxTestResult,
-  SystemMetrics
+  ModelLocation, GeneratedFile, ProjectTemplate, BuildProjectRequest, BuildResult,
+  ProjectRecord, Skill, TokenCount, ScanResult, SandboxTestResult,
+  SystemMetrics, LlamaServerStatus, GithubUserInfo
 } from '../types';
 
-export const locateQwen = () =>
-  invoke<QwenLocation>('locate_qwen');
+export const locateModel = () =>
+  invoke<ModelLocation>('locate_model');
 
-export const scanOllamaModels = () =>
-  invoke<OllamaModel[]>('scan_ollama_models');
-
-export const qwenGenerate = (location: QwenLocation, prompt: string, system?: string, projectPath?: string | null) =>
-  invoke<string>('qwen_generate', { location, prompt, system: system ?? null, projectPath: projectPath ?? null });
-
-export const ollamaChat = (model: string, prompt: string, system?: string) =>
-  invoke<string>('ollama_chat', { model, prompt, system: system ?? null });
+export const modelGenerate = (location: ModelLocation, prompt: string, system?: string, projectPath?: string | null) =>
+  invoke<string>('model_generate', { location, prompt, system: system ?? null, projectPath: projectPath ?? null });
 
 export const scanSystemModels = () =>
   invoke<ScanResult>('scan_system_models');
@@ -33,7 +27,14 @@ export const templateToFiles = (templateId: string, projectName: string, descrip
   invoke<GeneratedFile[]>('template_to_files', { templateId, projectName, description });
 
 export const buildAndPushProject = (req: BuildProjectRequest) =>
-  invoke<BuildResult>('build_and_push_project', { req });
+  invoke<BuildResult>('build_and_push_project', {
+    projectName: req.project_name,
+    description: req.description,
+    files: req.generated_files,
+    private: req.private_repo,
+    outputDir: req.output_dir,
+    pushToGithub: req.push_to_github ?? true,
+  });
 
 export const readFileContent = (path: string) =>
   invoke<string>('read_file_content', { path });
@@ -47,5 +48,24 @@ export const testSandboxEnvironment = () =>
 export const getSystemMetrics = () =>
   invoke<SystemMetrics>('get_system_metrics');
 
-export const clearKvCache = () =>
-  invoke<string>('clear_kv_cache');
+export const saveGithubToken = (token: string) =>
+  invoke<void>('save_github_token', { token });
+
+export const getGithubTokenStatus = () =>
+  invoke<boolean>('get_github_token_status');
+
+export const getGithubUserInfo = () =>
+  invoke<GithubUserInfo>('get_github_user_info');
+
+export const clearGithubToken = () =>
+  invoke<void>('clear_github_token');
+
+// llama.cpp Server Management
+export const checkLlamaServerStatus = () =>
+  invoke<LlamaServerStatus>('check_llama_server_status');
+
+export const startLlamaServer = (modelPath?: string) =>
+  invoke<string>('start_llama_server', { modelPath: modelPath ?? null });
+
+export const ensureLlamaServerRunning = () =>
+  invoke<string>('ensure_llama_server_running');
